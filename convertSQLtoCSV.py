@@ -5,7 +5,6 @@ import os
 DB_PATH = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
 # Join fx_labels to tx_labels to include the source_file field from tx_labels
 
-
 QUERY = (
 	"SELECT fx.*, tx.source_file "
 	"FROM fx_labels AS fx "
