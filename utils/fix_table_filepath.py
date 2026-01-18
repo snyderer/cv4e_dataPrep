@@ -37,7 +37,21 @@ def fix_table_filepath(tbl_filepath: str,
         elif OS.upper() == 'UNIX' or OS.upper() == 'LINUX':
             fp = str(fp).replace('\\', '/')
         fixed_filepaths[i] = fp
+        
     tbl['source_file'] = fixed_filepaths
     tbl.to_csv(output_tbl_filepath, index=False)
 
+def fix_swapped_columns(tbl_filepath: str, 
+                 output_tbl_filepath: str = None):
+    if output_tbl_filepath is None:
+        output_tbl_filepath = tbl_filepath
+
+    tbl = pd.read_csv(tbl_filepath)
+    
+    tbl[["f_max_hz", "x_min_m"]] = tbl[["x_min_m", "f_max_hz"]].values
+    
+    tbl.to_csv(output_tbl_filepath, index=False)
+
+
 fix_table_filepath(tbl_filepath, data_base_path, OS='UNIX', output_tbl_filepath=output_tbl_filepath)
+# fix_swapped_columns(output_tbl_filepath, output_tbl_filepath) # Only run if table was generated prior to 2026-01-16

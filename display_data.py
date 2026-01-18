@@ -2,7 +2,7 @@ import os
 import glob
 import matplotlib.pyplot as plt
 import numpy as np
-import data_io as io
+import utils.data_io as io
 
 # Path containing dataset subfolders (each folder contains preprocessed .h5 files)
 input_data_path = r'/mnt/class_data/esnyder/raw_data'
