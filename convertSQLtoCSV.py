@@ -3,15 +3,24 @@ import sqlite3
 import os
 
 DB_PATH = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
-# Join fx_labels to tx_labels to include the source_file field from tx_labels
-
-QUERY = (
-	"SELECT fx.*, tx.source_file "
-	"FROM fx_labels AS fx "
-	"LEFT JOIN tx_labels AS tx ON fx.tx_id = tx.id "
-	"WHERE fx.label_name IN ('Bp_B', 'Bp_A');"
-)
 OUT_CSV = 'fx_labels_Bp.csv'
+fx_have_source_files = True # Set to False if fx_labels do not have source_file info
+
+if fx_have_source_files == False:
+	# Join fx_labels to tx_labels to include the source_file field from tx_labels
+	QUERY = (
+		"SELECT fx.*, tx.source_file "
+		"FROM fx_labels AS fx "
+		"LEFT JOIN tx_labels AS tx ON fx.tx_id = tx.id "
+		"WHERE fx.label_name IN ('Bp_B', 'Bp_A');"
+	)
+else:
+	QUERY = (
+		"SELECT * "
+		"FROM fx_labels "
+		"WHERE label_name IN ('Bp_B', 'Bp_A');"
+	)
+
 
 def export_query_to_csv(db_path: str, query: str, out_csv: str):
 	if not os.path.exists(db_path):
