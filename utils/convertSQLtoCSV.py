@@ -6,6 +6,9 @@ DB_PATH = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
 OUT_CSV = 'fx_labels_Bp.csv'
 fx_have_source_files = True # Set to False if fx_labels do not have source_file info
 
+tx_table = 'tx_labels'
+fx_table = 'fx_labels'
+
 if fx_have_source_files == False:
 	# Join fx_labels to tx_labels to include the source_file field from tx_labels
 	QUERY = (
