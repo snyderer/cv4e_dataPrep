@@ -7,7 +7,6 @@ import scipy.signal as sp
 import os
 import sqlite3
 import ast
-
 from scipy.ndimage import median_filter
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import binary_dilation
@@ -16,7 +15,6 @@ filepath = r'F:\svalbard_full'
 filename = '20220822_090007.h5'
 data_filepath = os.path.join(filepath, filename)
 db_path = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
-
 
 settings_file = io.find_settings_h5(data_filepath)
 settings = io.load_settings_preprocessed_h5(settings_file)
@@ -70,28 +68,33 @@ print(f"{cols=}")
 
 
 # # MAH TODO this crop should be done by contour then zero out all the pixels further than n from the countour
-# tx_small = tx[1000:3000, 2500:3500]
+tx_small = tx[1000:3000, 2500:3500]
 
 
-# # tx_small_filtered  = median_filter(np.abs(tx_small), size=15)  # 3×3 window
-# tx_small_filtered = gaussian_filter(np.abs(tx_small), sigma=5.0)
-# tolerance = 0.1
-# tx_small_filtered_tol = np.where(tx_small_filtered>tolerance, 1, 0)
+# tx_small_filtered  = median_filter(np.abs(tx_small), size=15)  # 3×3 window
+tx_small_filtered = gaussian_filter(np.abs(tx_small), sigma=5.0)
+tolerance = 0.1
+tx_small_filtered_tol = np.where(tx_small_filtered>tolerance, 1, 0)
 
-# # binary image: True/False or 0/1
-# tx_small_filtered_tol_dilated = binary_dilation(tx_small_filtered_tol, structure=np.ones((53, 53)))
+# binary image: True/False or 0/1
+tx_small_filtered_expanded = gaussian_filter(tx_small_filtered_tol.astype(float), sigma=9.0)
+tx_small_filtered_expanded = np.where(tx_small_filtered_expanded>0.01, 1, 0)
 
-# cutout = np.where(tx_small_filtered_tol_dilated, tx_small, 0)
+tx_small_filtered_tol_dilated = binary_dilation(tx_small_filtered_tol, structure=np.ones((53, 53)))
 
-# fig, axs = plt.subplots(1,5)
-# axs[0].imshow(tx_small , vmin=0, vmax=.4, origin="lower")
-# axs[1].imshow(tx_small_filtered , vmin=0,vmax=.4, origin="lower")
-# axs[2].imshow(tx_small_filtered_tol , origin="lower")
-# axs[3].imshow(tx_small_filtered_tol_dilated , origin="lower")
-# axs[4].imshow(cutout ,vmin=0, vmax=.4, origin="lower")
+cutout = np.where(tx_small_filtered_tol_dilated, tx_small, 0)
 
-# plt.show()
-# exit()
+fig, axs = plt.subplots(2,3)
+axs = axs.flatten()
+axs[0].imshow(tx_small , vmin=0, vmax=.4, origin="lower")
+axs[1].imshow(tx_small_filtered , vmin=0,vmax=.4, origin="lower")
+axs[2].imshow(tx_small_filtered_tol , origin="lower")
+axs[3].imshow(tx_small_filtered_tol_dilated , origin="lower")
+axs[4].imshow(cutout ,vmin=0, vmax=.4, origin="lower")
+axs[5].imshow(tx_small_filtered_expanded ,vmin=0, vmax=.4, origin="lower")
+
+plt.show()
+exit()
 
 for row in rows[:2]:
     row = list(row)
@@ -111,27 +114,16 @@ for row in rows[:2]:
     print(f"{len(x_list)=}")
     print(f"{len(t_list)=}")
 
-
-    # plt.plot(t_list,x_list)
-    # plt.show()
-    # exit()
-
-    # pt_min = pt*t_min/t_extent
-    # pt_max = pt*t_max/t_extent
-
-    # px_min = px*x_min/x_extent
-    # px_max = px*x_max/x_extent
     x_pxl = tx.shape[0]*x_list/x_extent
     t_pxl = tx.shape[1]*t_list/t_extent
-    # x_pxl = x_list/(x_extent / tx.shape[0])
-    # t_pxl = t_list/(t_extent / tx.shape[1])
 
-    print(t_pxl[:5])    
+    print(t_pxl[:5])
     print(t_pxl[-5:])
 
     plt.imshow(tx, vmin=0, vmax=.4)
     plt.scatter(t_pxl, x_pxl)
     plt.show()
 
-#     tx_row['apex_time']=1661159695.66
-# file_start_time=np.float64(1661159677.0)
+    
+    # tx_row['apex_time']=1661159695.66
+    # file_start_time=np.float64(1661159677.0)
