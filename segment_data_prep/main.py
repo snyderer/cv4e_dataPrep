@@ -10,6 +10,8 @@ import ast
 from scipy.ndimage import median_filter
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import binary_dilation
+import torch
+import torch.nn.functional as F
 
 # class Loader: # skipping the Loader class for simplicity. Might be good to incorporate later
 #     def __init__():
@@ -23,8 +25,10 @@ from scipy.ndimage import binary_dilation
 ###############################
 # temporary loading and setup
 ###############################
-data_path = 'F:/'
-labels_db_path = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
+# data_path = 'F:/'
+# labels_db_path = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
+data_path = r'/mnt/class_data/esnyder/raw_data'
+labels_db_path = r'/mnt/class_data/esnyder/segmentation_data/A25.db'
 
 ###############################
 # Define methods
@@ -75,7 +79,53 @@ def map_mask_to_3D():
     return 0
 
 
+def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
+    # Select device automatically
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Make window if not supplied
+    if window is None:
+        window = torch.hann_window(n_fft, periodic=True, device=device)
+    # Convert numpy array -> torch tensor and move to device
+    # tx shape: (channels, samples)
+    signals = torch.from_numpy(tx).float().to(device)
+
+    # Batch STFT: signals shape [batch, time] → specs shape [batch, freq, time]
+    specs = torch.stft(
+        signals,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        window=window,
+        return_complex=True   # complex tensor for easy magnitude/phase
+    )
+
+    # Convert to magnitude if desired
+    specs_mag = specs.abs()
+
+    # If you want result back on CPU
+    specs_mag = specs_mag.cpu()
+
+    return specs_mag
+
+#############################################################################
+# define settings
+#############################################################################
+# Spectrogram params:
+n_fft = 256
+hop_length = 230
+window = np.hanning(n_fft).astype(np.float32)  # NumPy Hann on CPU
+# try:
+window = torch.tensor(window, dtype=torch.float32).to("cuda")
+# except Exception as e:
+#     print(e)
+#     print('CUDA didn''t work. Running on CPU instead.')
+    
+
+maxpool_x_size = 10
+#############################################################################
 # load labels
+#############################################################################
 query = (
     "SELECT * "
     "FROM tx_labels "
@@ -171,4 +221,99 @@ for dataset in datasets:
                 t_s = t_s[~idx_next_window]
             det_mask = generate_2D_mask(tx, x_extent=x_extent, t_extent=t_extent, x_lab=x_m, t_lab=t_s)
             mask[det_mask.astype(bool)] = det_num
+    
+        ##### calc spectrograms and reshape data ######
+        specs = compute_spectrograms(tx, fs, n_fft=256, hop_length=hop_length, window=None)
+       
+        if True: # plot for debugging
+            # Convert to dB
+            magnitude = specs.abs() # gives amplitude;
+            # magnitude = 20 * torch.log10(specs_cpu.abs() + 1e-10)  # avoid log(0)    
             
+            # Pick a few channels to plot
+            channels_to_plot = [0, 100, 110]  # for example
+
+            fig, axs = plt.subplots(len(channels_to_plot), 1, figsize=(8, 6))
+            if len(channels_to_plot) == 1:
+                axs = [axs]  # make iterable
+
+            for ax, ch in zip(axs, channels_to_plot):
+                img = ax.imshow(
+                    magnitude[ch].numpy(), 
+                    origin="lower",           # frequency axis lowest at bottom
+                    aspect="auto",            # auto aspect ratio for time/freq
+                    cmap="viridis"            # color map for better visualization
+                )
+                ax.set_title(f"Channel {ch}")
+                ax.set_ylabel("Frequency bin")
+                ax.set_xlabel("Time frame")
+                fig.colorbar(img, ax=ax, format="%+2.0f dB")
+                fig.savefig('CUDA_spectrogram_test')
+
+        ####### dimension reduction #########
+        specs_amp = specs.abs().squeeze().contiguous()  # linear amplitude, remove dims
+
+        group_size = maxpool_x_size
+        n_channels, n_freq_bins, n_time_frames = specs_amp.shape
+
+        # Trim channels so we can group evenly
+        remainder = n_channels % group_size
+        if remainder != 0:
+            specs_amp = specs_amp[:n_channels - remainder]
+            n_channels = specs_amp.shape[0]
+
+        n_groups = n_channels // group_size
+
+        # Reshape to (n_groups, group_size, freq, time) and max over group_size
+        specs_grouped = specs_amp.view(n_groups, group_size, n_freq_bins, n_time_frames)
+        pooled = specs_grouped.max(dim=1).values        
+
+        pooled_cpu = pooled.to('cpu').numpy()  # Shape: (n_groups, n_freq, n_time)
+
+        # Pick indices to slice at
+        freq_idx = 25               # example frequency bin
+        chan_group_idx = 200          # example channel group
+        time_idx = 20               # example time frame
+
+        fig, axs = plt.subplots(1, 3, figsize=(15, 4))
+
+        # 1️⃣ TIME–DISTANCE slice (fix freq)
+        img1 = axs[0].imshow(
+            pooled_cpu[:, freq_idx, :],   # n_groups × n_time_frames
+            origin='lower',
+            aspect='auto',
+            cmap='viridis'
+        )
+        axs[0].set_title(f"Time–Distance (Freq bin {freq_idx})")
+        axs[0].set_xlabel("Time frame")
+        axs[0].set_ylabel("Channel group (distance)")
+        fig.colorbar(img1, ax=axs[0])
+
+        # 2️⃣ TIME–FREQ slice (fix channel group)
+        img2 = axs[1].imshow(
+            pooled_cpu[chan_group_idx, :, :],  # n_freq_bins × n_time_frames
+            origin='lower',
+            aspect='auto',
+            cmap='viridis'
+        )
+        axs[1].set_title(f"Time–Freq (Group {chan_group_idx})")
+        axs[1].set_xlabel("Time frame")
+        axs[1].set_ylabel("Frequency bin")
+        fig.colorbar(img2, ax=axs[1])
+
+        # 3️⃣ FREQ–DISTANCE slice (fix time)
+        img3 = axs[2].imshow(
+            pooled_cpu[:, :, time_idx],        # n_groups × n_freq_bins
+            origin='lower',
+            aspect='auto',
+            cmap='viridis'
+        )
+        axs[2].set_title(f"Freq–Distance (Time frame {time_idx})")
+        axs[2].set_xlabel("Frequency bin")
+        axs[2].set_ylabel("Channel group (distance)")
+        fig.colorbar(img3, ax=axs[2])
+
+        plt.tight_layout()
+        plt.savefig('slices.png')
+
+        ok = 1
