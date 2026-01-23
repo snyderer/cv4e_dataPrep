@@ -112,8 +112,8 @@ def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
 # define settings
 #############################################################################
 # Spectrogram params:
-n_fft = 256
-hop_length = 230
+n_fft = 200
+hop_length = 40
 window = np.hanning(n_fft).astype(np.float32)  # NumPy Hann on CPU
 # try:
 window = torch.tensor(window, dtype=torch.float32).to("cuda")
@@ -121,8 +121,8 @@ window = torch.tensor(window, dtype=torch.float32).to("cuda")
 #     print(e)
 #     print('CUDA didn''t work. Running on CPU instead.')
     
-
-maxpool_x_size = 10
+pool_method = 'max' # max, mean, or median
+pool_size = 10
 #############################################################################
 # load labels
 #############################################################################
@@ -160,6 +160,8 @@ for dataset in datasets:
     original_shape = settings['rehydration_info']['target_shape']
     dx = settings['processing_settings']['dx']
     fs = settings['processing_settings']['fs']
+    dt = 1/fs
+    dt_new = hop_length/fs
     file_map = pd.DataFrame(settings['file_map'], columns=['timestamp', 'filename'])
 
     first_time = rows_in_dataset['apex_time'].min()
@@ -225,95 +227,87 @@ for dataset in datasets:
         ##### calc spectrograms and reshape data ######
         specs = compute_spectrograms(tx, fs, n_fft=256, hop_length=hop_length, window=None)
        
-        if True: # plot for debugging
-            # Convert to dB
-            magnitude = specs.abs() # gives amplitude;
-            # magnitude = 20 * torch.log10(specs_cpu.abs() + 1e-10)  # avoid log(0)    
-            
-            # Pick a few channels to plot
-            channels_to_plot = [0, 100, 110]  # for example
-
-            fig, axs = plt.subplots(len(channels_to_plot), 1, figsize=(8, 6))
-            if len(channels_to_plot) == 1:
-                axs = [axs]  # make iterable
-
-            for ax, ch in zip(axs, channels_to_plot):
-                img = ax.imshow(
-                    magnitude[ch].numpy(), 
-                    origin="lower",           # frequency axis lowest at bottom
-                    aspect="auto",            # auto aspect ratio for time/freq
-                    cmap="viridis"            # color map for better visualization
-                )
-                ax.set_title(f"Channel {ch}")
-                ax.set_ylabel("Frequency bin")
-                ax.set_xlabel("Time frame")
-                fig.colorbar(img, ax=ax, format="%+2.0f dB")
-                fig.savefig('CUDA_spectrogram_test')
-
         ####### dimension reduction #########
-        specs_amp = specs.abs().squeeze().contiguous()  # linear amplitude, remove dims
+        specs = specs.abs().squeeze().contiguous()  # linear amplitude, remove dims
 
-        group_size = maxpool_x_size
-        n_channels, n_freq_bins, n_time_frames = specs_amp.shape
-
+        group_size = pool_size
+        n_channels, n_freq_bins, n_time_frames = specs.shape
+        x_new = np.arange(0, n_channels)*dx
+        f_new = np.arange(0, n_freq_bins)*fs/(2*n_freq_bins)
+        t_new = np.arange(0, n_time_frames)*dt_new
+        
+        # TODO RESUME HERE!!!!!!!!!!!!!!!!!!!!!!!
+        # truncate in frequency dimension to reduce data size. 
+        # Save x_new (truncated after remainder is removed), f_new (truncated), t_new 
+        # Map original mask onto x_new, t_new space to create new mask.
+        # Save 
+        
         # Trim channels so we can group evenly
         remainder = n_channels % group_size
         if remainder != 0:
-            specs_amp = specs_amp[:n_channels - remainder]
-            n_channels = specs_amp.shape[0]
+            specs = specs[:n_channels - remainder]
+            n_channels = specs.shape[0]
 
         n_groups = n_channels // group_size
 
         # Reshape to (n_groups, group_size, freq, time) and max over group_size
-        specs_grouped = specs_amp.view(n_groups, group_size, n_freq_bins, n_time_frames)
-        pooled = specs_grouped.max(dim=1).values        
+        specs_grouped = specs.view(n_groups, group_size, n_freq_bins, n_time_frames)
+        
+        if pool_method=='max':
+            pooled = specs_grouped.max(dim=1).values      
+            pooled_cpu = pooled.to('cpu').numpy() 
+        elif pool_method=='mean':
+            pooled = specs_grouped.mean(dim=1)
+            pooled_cpu = pooled.to('cpu').numpy()
+        elif pool_method=='median':
+            pooled = specs_grouped.median(dim=1).values 
+            pooled_cpu = pooled.to('cpu').numpy()
+        
+        if True: # plotting some slices. Set to false for full run
+            # Pick indices to slice at
+            freq_idx = 25               # example frequency bin
+            chan_group_idx = 400          # example channel group
+            time_idx = 100               # example time frame
 
-        pooled_cpu = pooled.to('cpu').numpy()  # Shape: (n_groups, n_freq, n_time)
+            fig, axs = plt.subplots(1, 3, figsize=(15, 4))
 
-        # Pick indices to slice at
-        freq_idx = 25               # example frequency bin
-        chan_group_idx = 200          # example channel group
-        time_idx = 20               # example time frame
+            # 1️⃣ TIME–DISTANCE slice (fix freq)
+            img1 = axs[0].imshow(
+                pooled_cpu[:, freq_idx, :],   # n_groups × n_time_frames
+                origin='lower',
+                aspect='auto',
+                cmap='viridis'
+            )
+            axs[0].set_title(f"Time–Distance (Freq bin {freq_idx})")
+            axs[0].set_xlabel("Time frame")
+            axs[0].set_ylabel("Channel group (distance)")
+            fig.colorbar(img1, ax=axs[0])
 
-        fig, axs = plt.subplots(1, 3, figsize=(15, 4))
+            # 2️⃣ TIME–FREQ slice (fix channel group)
+            img2 = axs[1].imshow(
+                pooled_cpu[chan_group_idx, :, :],  # n_freq_bins × n_time_frames
+                origin='lower',
+                aspect='auto',
+                cmap='viridis'
+            )
+            axs[1].set_title(f"Time–Freq (Group {chan_group_idx})")
+            axs[1].set_xlabel("Time frame")
+            axs[1].set_ylabel("Frequency bin")
+            fig.colorbar(img2, ax=axs[1])
 
-        # 1️⃣ TIME–DISTANCE slice (fix freq)
-        img1 = axs[0].imshow(
-            pooled_cpu[:, freq_idx, :],   # n_groups × n_time_frames
-            origin='lower',
-            aspect='auto',
-            cmap='viridis'
-        )
-        axs[0].set_title(f"Time–Distance (Freq bin {freq_idx})")
-        axs[0].set_xlabel("Time frame")
-        axs[0].set_ylabel("Channel group (distance)")
-        fig.colorbar(img1, ax=axs[0])
+            # 3️⃣ FREQ–DISTANCE slice (fix time)
+            img3 = axs[2].imshow(
+                pooled_cpu[:, :, time_idx],        # n_groups × n_freq_bins
+                origin='lower',
+                aspect='auto',
+                cmap='viridis'
+            )
+            axs[2].set_title(f"Freq–Distance (Time frame {time_idx})")
+            axs[2].set_xlabel("Frequency bin")
+            axs[2].set_ylabel("Channel group (distance)")
+            fig.colorbar(img3, ax=axs[2])
 
-        # 2️⃣ TIME–FREQ slice (fix channel group)
-        img2 = axs[1].imshow(
-            pooled_cpu[chan_group_idx, :, :],  # n_freq_bins × n_time_frames
-            origin='lower',
-            aspect='auto',
-            cmap='viridis'
-        )
-        axs[1].set_title(f"Time–Freq (Group {chan_group_idx})")
-        axs[1].set_xlabel("Time frame")
-        axs[1].set_ylabel("Frequency bin")
-        fig.colorbar(img2, ax=axs[1])
-
-        # 3️⃣ FREQ–DISTANCE slice (fix time)
-        img3 = axs[2].imshow(
-            pooled_cpu[:, :, time_idx],        # n_groups × n_freq_bins
-            origin='lower',
-            aspect='auto',
-            cmap='viridis'
-        )
-        axs[2].set_title(f"Freq–Distance (Time frame {time_idx})")
-        axs[2].set_xlabel("Frequency bin")
-        axs[2].set_ylabel("Channel group (distance)")
-        fig.colorbar(img3, ax=axs[2])
-
-        plt.tight_layout()
-        plt.savefig('slices.png')
+            plt.tight_layout()
+            plt.savefig('slices_' + pool_method + 'Pool.png')
 
         ok = 1
