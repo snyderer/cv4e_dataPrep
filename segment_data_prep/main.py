@@ -75,14 +75,64 @@ def generate_2D_mask(tx_img, x_extent, t_extent, x_lab, t_lab,
 
     return  mask
 
-def map_mask_to_3D():
-    return 0
+def map_mask_to_reduced_size(mask_orig, t_orig, x_orig, t_new, x_new):
+    """
+    Downsample integer detection-ID mask to match reduced space×time size.
+
+    Parameters
+    ----------
+    mask_orig : ndarray (n_x_orig, n_t_orig)
+        Original integer detection-number mask (0 = no detection).
+    t_orig : ndarray
+        Time coordinates of original frames (length n_t_orig).
+    x_orig : ndarray
+        Spatial coordinates of original channels (length n_x_orig).
+    t_new : ndarray
+        Time coordinates of reduced output (length n_t_new).
+    x_new : ndarray
+        Spatial coordinates of reduced output (length n_x_new).
+
+    Returns
+    -------
+    mask_new : ndarray (n_x_new, n_t_new)
+        Reduced mask, each pixel holding the most frequent detection number
+        from its corresponding original block (0 if no detection).
+    """
+    n_x_new = len(x_new)
+    n_t_new = len(t_new)
+    mask_new = np.zeros((n_x_new, n_t_new), dtype=mask_orig.dtype)
+
+    dx_new = (x_new[1] - x_new[0]) if n_x_new > 1 else x_orig[-1] - x_orig[0]
+    dt_new = (t_new[1] - t_new[0]) if n_t_new > 1 else t_orig[-1] - t_orig[0]
+
+    half_dx = dx_new / 2.0
+    half_dt = dt_new / 2.0
+
+    for ix_new, x_center in enumerate(x_new):
+        x_min = x_center - half_dx
+        x_max = x_center + half_dx
+        idx_x = np.where((x_orig >= x_min) & (x_orig < x_max))[0]
+
+        for it_new, t_center in enumerate(t_new):
+            t_min = t_center - half_dt
+            t_max = t_center + half_dt
+            idx_t = np.where((t_orig >= t_min) & (t_orig < t_max))[0]
+
+            if len(idx_x) > 0 and len(idx_t) > 0:
+                block = mask_orig[np.ix_(idx_x, idx_t)]
+                # Find most frequent nonzero detection ID
+                values, counts = np.unique(block[block > 0], return_counts=True)
+                if len(values) > 0:
+                    mask_new[ix_new, it_new] = values[np.argmax(counts)]
+                # else remains 0 (no detection)
+
+    return mask_new
 
 
 def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
     # Select device automatically
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    # print(f"Using device: {device}")
 
     # Make window if not supplied
     if window is None:
@@ -108,11 +158,38 @@ def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
 
     return specs_mag
 
+def save_sample(out_dir, sample_id, pooled_tensor, mask_reduced):
+    """
+    Save pooled tensor and mask in [channels, height, width] format.
+
+    pooled_tensor: np.ndarray shape (distance, freq, time) after pooling
+    mask_reduced: np.ndarray shape (distance, time) with class IDs
+    """
+
+    # Convert pooled to channels-first: (freq, distance, time)
+    pooled_cf = np.transpose(pooled_tensor, (1, 0, 2))  # freq, dist, time
+
+    # Convert to torch
+    pooled_cf_torch = torch.from_numpy(pooled_cf).float()
+    mask_torch = torch.from_numpy(mask_reduced).long()
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Save dict
+    torch.save(
+        {
+            "input": pooled_cf_torch,  # [channels=freq, height=dist, width=time]
+            "mask": mask_torch         # [height=dist, width=time]
+        },
+        os.path.join(out_dir, f"{sample_id}.pt")
+    )
+
 #############################################################################
 # define settings
 #############################################################################
 # Spectrogram params:
 n_fft = 200
+f_band = [10, 60]
 hop_length = 40
 window = np.hanning(n_fft).astype(np.float32)  # NumPy Hann on CPU
 # try:
@@ -120,9 +197,13 @@ window = torch.tensor(window, dtype=torch.float32).to("cuda")
 # except Exception as e:
 #     print(e)
 #     print('CUDA didn''t work. Running on CPU instead.')
-    
-pool_method = 'max' # max, mean, or median
+
+# Pooling settings:
+pool_method = 'median' # max, mean, or median
 pool_size = 10
+
+# save loc:
+save_loc = r'/mnt/class_data/esnyder/segmentation_data/fixed_width_masks_data'
 #############################################################################
 # load labels
 #############################################################################
@@ -139,7 +220,6 @@ cur.execute(query)
 rows = cur.fetchall()
 
 labels = pd.read_sql_query(query, conn)
-
 
 ###################################################
 # Set up looping for going over datasets and files
@@ -186,7 +266,7 @@ for dataset in datasets:
 
     previous_labels = {'x_m': [], 't_s': [], 'det_num': []}
 
-    for file in source_files[:2]: # TODO remove :2 to iterate over all files
+    for file in source_files: 
         # load tx data
         fk_dehyd, timestamp = io.load_preprocessed_h5(os.path.join(dataset_path, file))        
         tx = 1e9 * io.rehydrate(fk_dehyd, nonzeros, original_shape, return_format='tx')
@@ -232,40 +312,43 @@ for dataset in datasets:
 
         group_size = pool_size
         n_channels, n_freq_bins, n_time_frames = specs.shape
+        f_new = np.fft.rfftfreq(n_fft, d=1/fs)
         x_new = np.arange(0, n_channels)*dx
-        f_new = np.arange(0, n_freq_bins)*fs/(2*n_freq_bins)
         t_new = np.arange(0, n_time_frames)*dt_new
-        
-        # TODO RESUME HERE!!!!!!!!!!!!!!!!!!!!!!!
-        # truncate in frequency dimension to reduce data size. 
-        # Save x_new (truncated after remainder is removed), f_new (truncated), t_new 
-        # Map original mask onto x_new, t_new space to create new mask.
-        # Save 
-        
+                        
         # Trim channels so we can group evenly
         remainder = n_channels % group_size
         if remainder != 0:
             specs = specs[:n_channels - remainder]
+            mask = mask[:mask.shape[0] - remainder, :]
             n_channels = specs.shape[0]
+            x_new = x_new[:n_channels - remainder]
 
-        n_groups = n_channels // group_size
-
+        # truncate in frequency dimension 
+        band_idx = np.where((f_new >= f_band[0]) & (f_new <= f_band[1]))[0]
+        specs = specs[:, band_idx, :]
+        f_new = f_new[band_idx]
+        n_freq_bins = len(f_new)
+        
         # Reshape to (n_groups, group_size, freq, time) and max over group_size
+        n_groups = n_channels // group_size
         specs_grouped = specs.view(n_groups, group_size, n_freq_bins, n_time_frames)
         
         if pool_method=='max':
             pooled = specs_grouped.max(dim=1).values      
-            pooled_cpu = pooled.to('cpu').numpy() 
+            pooled = pooled.to('cpu').numpy() 
         elif pool_method=='mean':
             pooled = specs_grouped.mean(dim=1)
-            pooled_cpu = pooled.to('cpu').numpy()
+            pooled = pooled.to('cpu').numpy()
         elif pool_method=='median':
             pooled = specs_grouped.median(dim=1).values 
-            pooled_cpu = pooled.to('cpu').numpy()
+            pooled = pooled.to('cpu').numpy()
+        
+        x_new = np.arange(0, pooled.shape[1])*x_new.max()/pooled.shape[1]
         
         if True: # plotting some slices. Set to false for full run
             # Pick indices to slice at
-            freq_idx = 25               # example frequency bin
+            freq_idx = np.argmin(np.abs(f_new - 25))
             chan_group_idx = 400          # example channel group
             time_idx = 100               # example time frame
 
@@ -273,7 +356,7 @@ for dataset in datasets:
 
             # 1️⃣ TIME–DISTANCE slice (fix freq)
             img1 = axs[0].imshow(
-                pooled_cpu[:, freq_idx, :],   # n_groups × n_time_frames
+                pooled[:, freq_idx, :],   # n_groups × n_time_frames
                 origin='lower',
                 aspect='auto',
                 cmap='viridis'
@@ -285,7 +368,7 @@ for dataset in datasets:
 
             # 2️⃣ TIME–FREQ slice (fix channel group)
             img2 = axs[1].imshow(
-                pooled_cpu[chan_group_idx, :, :],  # n_freq_bins × n_time_frames
+                pooled[chan_group_idx, :, :],  # n_freq_bins × n_time_frames
                 origin='lower',
                 aspect='auto',
                 cmap='viridis'
@@ -297,7 +380,7 @@ for dataset in datasets:
 
             # 3️⃣ FREQ–DISTANCE slice (fix time)
             img3 = axs[2].imshow(
-                pooled_cpu[:, :, time_idx],        # n_groups × n_freq_bins
+                pooled[:, :, time_idx],        # n_groups × n_freq_bins
                 origin='lower',
                 aspect='auto',
                 cmap='viridis'
@@ -310,4 +393,48 @@ for dataset in datasets:
             plt.tight_layout()
             plt.savefig('slices_' + pool_method + 'Pool.png')
 
-        ok = 1
+        # Original mask coords
+        t_orig_coords = np.arange(mask.shape[1]) * dt       # seconds for each time pixel
+        x_orig_coords = np.arange(mask.shape[0]) * dx       # meters for each channel
+
+        # Reduced coords from pooled data
+        t_new_coords = np.arange(pooled.shape[2]) * dt_new
+        x_new_coords = np.arange(pooled.shape[0]) * (x_extent / pooled.shape[0])
+
+        # transpose pooled
+
+        # map mask to new dimensions
+        mask_reduced = map_mask_to_reduced_size(mask, 
+                                        t_orig_coords, x_orig_coords,
+                                        t_new_coords, x_new_coords)
+
+        # force mask to be same dimensions as pooled data:
+        x_dif = mask_reduced.shape[0] - pooled.shape[0] 
+        t_dif = mask_reduced.shape[1] - pooled.shape[2] 
+        if x_dif>0:
+            mask_reduced = mask_reduced[:-x_dif, :]
+        if x_dif<0:
+            # Repeat last row n times along the row axis (axis=0)
+            repeated_rows = np.repeat(mask_reduced[-1:, :], np.abs(x_dif), axis=0)
+
+            # Concatenate original array with repeated columns
+            mask_reduced = np.vstack((mask_reduced, repeated_rows))
+
+        if t_dif>0:
+            mask_reduced = mask_reduced[:, :-t_dif]
+        if t_dif<0:
+            # Repeat last col n times along the columns axis (axis=1)
+            repeated_cols = np.repeat(mask_reduced[:, -1:], np.abs(t_dif), axis=1)
+
+            # Concatenate original array with repeated columns
+            mask_reduced = np.hstack((mask_reduced, repeated_cols))
+
+        filename = dataset + '_' + file[:-3]
+        
+        save_sample(
+            out_dir=save_loc,
+            sample_id=filename,
+            pooled_tensor=pooled,           # shape (dist, freq, time)
+            mask_reduced=mask_reduced        # shape (dist, time)
+        )
+        print('file ' + file + ' in dataset ' + dataset + ' processed.')
