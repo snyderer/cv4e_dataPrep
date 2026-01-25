@@ -10,6 +10,7 @@ import ast
 from scipy.ndimage import median_filter
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import binary_dilation
+from scipy.ndimage import uniform_filter1d 
 import torch
 import torch.nn.functional as F
 
@@ -29,13 +30,39 @@ import torch.nn.functional as F
 # labels_db_path = r'C:\Users\ers334\Documents\databases\DAS_Annotations\A25.db'
 data_path = r'/mnt/class_data/esnyder/raw_data'
 labels_db_path = r'/mnt/class_data/esnyder/segmentation_data/A25.db'
+save_path = r'/mnt/class_data/esnyder/segmentation_data/'
+#############################################################################
+# define settings
+#############################################################################
+# Spectrogram params:
+n_fft = 200
+f_band = [10, 60]
+hop_length = 40
+window = np.hanning(n_fft).astype(np.float32)  
+window = torch.tensor(window, dtype=torch.float32).to("cuda")
 
+# Mask generation settings:
+t_win = (.5, 1.5)
+gf_sigma=5.0
+tolerance = 0.1
+dilation_size = (53, 53) 
+shaping_method = 'hug'  # None (fixed width), 'blur', or 'hug'
+
+# Pooling settings:
+pool_method = 'median' # max, mean, or median
+pool_size = 10
+
+# save loc:
+shapestr = shaping_method if shaping_method != None else 'fixed_width'
+save_loc = os.path.join(save_path, shapestr)
+desc = """ 
+"""
 ###############################
 # Define methods
 ###############################
 def generate_2D_mask(tx_img, x_extent, t_extent, x_lab, t_lab, 
                      t_win = (.5, 1.5), gf_sigma=5.0, tolerance = 0.1,
-                     dilation_size = (53, 53), return_blurred = False):
+                     dilation_size = (53, 53), shaping_method = None):
     
     """
     tx_img: 2D ndarray [x, t]
@@ -65,15 +92,34 @@ def generate_2D_mask(tx_img, x_extent, t_extent, x_lab, t_lab,
         t_idx_max = int(np.min((ti + n_win[1], nt)))
         contour_mask[xi, t_idx_min:t_idx_max] = 1        
 
-    if not return_blurred:
+    if shaping_method in {None, 'fixed', 'fixed_width'}:
         return contour_mask
     
-    mask = gaussian_filter(np.abs(tx_img*contour_mask), sigma=gf_sigma)
-    mask = np.where(mask>tolerance, 1, 0)
+    if shaping_method == 'blur':
+        # blur the energy inside the countour_mask window and keep values > tolerance
+        mask = gaussian_filter(np.abs(tx_img*contour_mask), sigma=gf_sigma)
+        mask = np.where(mask>tolerance, 1, 0)
 
-    mask = binary_dilation(mask, structure=np.ones(dilation_size))
+        mask = binary_dilation(mask, structure=np.ones(dilation_size))
+        return  mask
+    
+    if shaping_method in {'hug', 'hugging'}:
+        mask = np.zeros_like(contour_mask, dtype=bool)
+        masked_img = np.abs(contour_mask*tx_img)
+        masked_img = masked_img - np.min(masked_img)
+        masked_img = masked_img/np.max(masked_img)
+        idx_min_list = []
+        idx_max_list = []
+        for xi in x_idx_lab:
+            masked_row = masked_img[xi, :] 
+            
+            indices = np.where(masked_row > tolerance)[0]
+            if len(indices)>1:
+                np.min(indices)
+                mask[xi, np.min(indices):np.max(indices)] = 1
+                
+        return mask
 
-    return  mask
 
 def map_mask_to_reduced_size(mask_orig, t_orig, x_orig, t_new, x_new):
     """
@@ -158,6 +204,57 @@ def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
 
     return specs_mag
 
+def save_settings(n_fft, f_band, hop_length, t_win, gf_sigma, tolerance,
+                  dilation_size, shaping_method, pool_method, pool_size,
+                  save_loc, desc):
+    """
+    Saves spectrogram, mask generation, and pooling settings into a text file
+    in the specified save directory.
+    """
+
+    # Compute window
+    window = np.hanning(n_fft).astype(np.float32)
+    try:
+        window_torch = torch.tensor(window, dtype=torch.float32).to("cuda")
+        cuda_status = "CUDA available: using GPU"
+    except Exception as e:
+        cuda_status = f"CUDA not available ({str(e)}); using CPU"
+
+    # Ensure output directory exists
+    os.makedirs(save_loc, exist_ok=True)
+
+    # Prepare filepath
+    settings_file = os.path.join(save_loc, "settings.txt")
+
+    # Write the settings
+    with open(settings_file, 'w') as f:
+        f.write("# Spectrogram params:\n")
+        f.write(f"n_fft = {n_fft}\n")
+        f.write(f"f_band = {f_band}\n")
+        f.write(f"hop_length = {hop_length}\n")
+        f.write("window = 'NumPy Hann window, float32'\n")
+        f.write(f"{cuda_status}\n\n")
+
+        f.write("# Mask generation settings:\n")
+        f.write(f"t_win = {t_win}\n")
+        f.write(f"gf_sigma = {gf_sigma}\n")
+        f.write(f"tolerance = {tolerance}\n")
+        f.write(f"dilation_size = {dilation_size}\n")
+        f.write(f"shaping_method = {shaping_method}\n\n")
+
+        f.write("# Pooling settings:\n")
+        f.write(f"pool_method = {pool_method}\n")
+        f.write(f"pool_size = {pool_size}\n\n")
+
+        f.write("# Save location:\n")
+        f.write(f"save_loc = {save_loc}\n\n")
+
+        f.write("# Description:\n")
+        f.write(desc.strip() + "\n")
+
+    print(f"Settings saved to {settings_file}")
+    return settings_file
+
 def save_sample(out_dir, sample_id, pooled_tensor, mask_reduced):
     """
     Save pooled tensor and mask in [channels, height, width] format.
@@ -184,26 +281,11 @@ def save_sample(out_dir, sample_id, pooled_tensor, mask_reduced):
         os.path.join(out_dir, f"{sample_id}.pt")
     )
 
-#############################################################################
-# define settings
-#############################################################################
-# Spectrogram params:
-n_fft = 200
-f_band = [10, 60]
-hop_length = 40
-window = np.hanning(n_fft).astype(np.float32)  # NumPy Hann on CPU
-# try:
-window = torch.tensor(window, dtype=torch.float32).to("cuda")
-# except Exception as e:
-#     print(e)
-#     print('CUDA didn''t work. Running on CPU instead.')
 
-# Pooling settings:
-pool_method = 'median' # max, mean, or median
-pool_size = 10
+save_settings(n_fft, f_band, hop_length, t_win, gf_sigma, tolerance,
+                  dilation_size, shaping_method, pool_method, pool_size,
+                  save_loc, desc)
 
-# save loc:
-save_loc = r'/mnt/class_data/esnyder/segmentation_data/fixed_width_masks_data'
 #############################################################################
 # load labels
 #############################################################################
@@ -230,7 +312,7 @@ datasets = labels['dataset'].unique()
 det_num = 0
 for dataset in datasets:
 
-    rows_in_dataset = labels.where(labels['dataset']==dataset) 
+    rows_in_dataset = labels[labels['dataset'] == dataset]
     dataset_path = os.path.normpath(os.path.join(data_path, dataset))
 
     # load settings for this dataset:
@@ -281,7 +363,9 @@ for dataset in datasets:
             for x_m_prev, t_s_prev, det_num_prev in zip(previous_labels['x_m'], previous_labels['t_s'], previous_labels['det_num']):
                 det_mask = generate_2D_mask(
                     tx, x_extent=x_extent, t_extent=t_extent,
-                    x_lab=x_m_prev, t_lab=t_s_prev
+                    x_lab=x_m_prev, t_lab=t_s_prev,
+                    t_win=t_win, gf_sigma=gf_sigma, tolerance=tolerance,
+                    dilation_size=dilation_size, shaping_method=shaping_method
                 )
                 mask[det_mask.astype(bool)] = det_num_prev
             # Clear after adding
@@ -301,7 +385,10 @@ for dataset in datasets:
                 previous_labels['det_num'].append(det_num)
                 x_m = x_m[~idx_next_window]
                 t_s = t_s[~idx_next_window]
-            det_mask = generate_2D_mask(tx, x_extent=x_extent, t_extent=t_extent, x_lab=x_m, t_lab=t_s)
+            det_mask = generate_2D_mask(tx, x_extent=x_extent, t_extent=t_extent, 
+                                        x_lab=x_m, t_lab=t_s,
+                                        t_win=t_win, gf_sigma=gf_sigma, tolerance=tolerance,
+                                        dilation_size=dilation_size, shaping_method=shaping_method)
             mask[det_mask.astype(bool)] = det_num
     
         ##### calc spectrograms and reshape data ######
@@ -346,7 +433,7 @@ for dataset in datasets:
         
         x_new = np.arange(0, pooled.shape[1])*x_new.max()/pooled.shape[1]
         
-        if True: # plotting some slices. Set to false for full run
+        if False: # plotting some slices. Set to false for full run
             # Pick indices to slice at
             freq_idx = np.argmin(np.abs(f_new - 25))
             chan_group_idx = 400          # example channel group

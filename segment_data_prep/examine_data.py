@@ -59,7 +59,7 @@ def plot_overlay(sample_path):
     plt.savefig('with_overlay.png')
 
 # Load and plot a few files
-sample_files = glob.glob("/mnt/class_data/esnyder/segmentation_data/fixed_width_masks_data/*.pt")[:3]  # first 3 files
+sample_files = glob.glob("/mnt/class_data/esnyder/segmentation_data/hugging_masks_data/*.pt")[:3]  # first 3 files
 iter = 0
 for f in sample_files:
     save_name = 'saved_data_' + str(iter) + '.png'
