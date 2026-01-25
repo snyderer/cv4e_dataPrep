@@ -118,6 +118,20 @@ def generate_2D_mask(tx_img, x_extent, t_extent, x_lab, t_lab,
                 np.min(indices)
                 mask[xi, np.min(indices):np.max(indices)] = 1
                 
+        # smooth out mask:
+        mask1 = binary_dilation(mask, structure=np.ones(dilation_size))
+        mask2 = gaussian_filter(np.abs(tx_img*contour_mask), sigma=gf_sigma)
+
+        plt.figure(figsize=(10, 4))
+
+        plt.subplot(1, 2, 1)  # row=1, col=2, index=1
+        plt.imshow(mask1)
+        plt.title("binary dilation")
+
+        plt.subplot(1, 2, 2)  # row=1, col=2, index=2
+        plt.imshow(mask2>tolerance)
+        plt.title("guass filter")
+        plt.savefig('test.png')
         return mask
 
 
