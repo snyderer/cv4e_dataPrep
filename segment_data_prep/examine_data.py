@@ -43,25 +43,32 @@ def plot_sample(sample_path, save_name='saved_data.png'):
     plt.tight_layout()
     plt.savefig(save_name)
 
-def plot_overlay(sample_path):
+def plot_overlay(sample_path, save_name):
     data = torch.load(sample_path)
     x_np = data["input"].numpy()
     y_np = data["mask"].numpy()
+    mask = y_np>0
 
-    freq_idx = x_np.shape[0] // 2   # middle frequency
-    img_input = x_np[freq_idx, :, :]
+    img_input = np.sum(x_np, axis=0)
 
     plt.figure(figsize=(6, 5))
-    plt.imshow(img_input, origin='lower', aspect='auto', cmap='gray')
-    plt.imshow(np.ma.masked_where(y_np == 0, y_np), origin='lower', aspect='auto', cmap='autumn', alpha=0.5)
-    plt.title(f"Overlay: Input channel {freq_idx} + mask")
+    plt.imshow(img_input*mask, origin='lower', aspect='auto',
+               cmap='viridis', vmin=0, vmax=40)
+    plt.title(f"Overlay")
     plt.colorbar()
-    plt.savefig('with_overlay.png')
+    plt.savefig(save_name)
 
 # Load and plot a few files
-sample_files = glob.glob("/mnt/class_data/esnyder/segmentation_data/hugging_masks_data/*.pt")[:3]  # first 3 files
+sample_files = glob.glob("/mnt/class_data/esnyder/segmentation_data/fixed_width/*.pt")[100:103]  # first 3 files
 iter = 0
 for f in sample_files:
     save_name = 'saved_data_' + str(iter) + '.png'
     plot_sample(f, save_name)
     iter += 1
+    
+
+for f in sample_files:
+    save_name = 'saved_data_overlayed' + str(iter) + '.png'
+    plot_overlay(f, save_name)
+    iter += 1
+    

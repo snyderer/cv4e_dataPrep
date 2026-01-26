@@ -39,7 +39,7 @@ window = np.hanning(n_fft).astype(np.float32)
 window = torch.tensor(window, dtype=torch.float32).to("cuda")
 
 # Mask generation settings:
-t_win = (.75, 1.5)
+t_win = (1, 3)
 gf_sigma=5.0
 tolerance = 0.1
 dilation_size = (53, 53) 
@@ -60,7 +60,6 @@ desc = """
 def generate_2D_mask(tx_img, x_extent, t_extent, x_lab, t_lab, 
                      t_win = (.5, 1.5), gf_sigma=5.0, tolerance = 0.1,
                      dilation_size = (53, 53), shaping_method = None):
-    
     """
     tx_img: 2D ndarray [x, t]
     x_extent: total distance extent in meters
@@ -137,61 +136,17 @@ def generate_2D_mask(tx_img, x_extent, t_extent, x_lab, t_lab,
         plt.savefig('test.png')
         return mask
 
-
-def map_mask_to_reduced_size(mask_orig, t_orig, x_orig, t_new, x_new):
-    """
-    Downsample integer detection-ID mask to match reduced space×time size.
-
-    Parameters
-    ----------
-    mask_orig : ndarray (n_x_orig, n_t_orig)
-        Original integer detection-number mask (0 = no detection).
-    t_orig : ndarray
-        Time coordinates of original frames (length n_t_orig).
-    x_orig : ndarray
-        Spatial coordinates of original channels (length n_x_orig).
-    t_new : ndarray
-        Time coordinates of reduced output (length n_t_new).
-    x_new : ndarray
-        Spatial coordinates of reduced output (length n_x_new).
-
-    Returns
-    -------
-    mask_new : ndarray (n_x_new, n_t_new)
-        Reduced mask, each pixel holding the most frequent detection number
-        from its corresponding original block (0 if no detection).
-    """
-    n_x_new = len(x_new)
-    n_t_new = len(t_new)
-    mask_new = np.zeros((n_x_new, n_t_new), dtype=mask_orig.dtype)
-
-    dx_new = (x_new[1] - x_new[0]) if n_x_new > 1 else x_orig[-1] - x_orig[0]
-    dt_new = (t_new[1] - t_new[0]) if n_t_new > 1 else t_orig[-1] - t_orig[0]
-
-    half_dx = dx_new / 2.0
-    half_dt = dt_new / 2.0
-
-    for ix_new, x_center in enumerate(x_new):
-        x_min = x_center - half_dx
-        x_max = x_center + half_dx
-        idx_x = np.where((x_orig >= x_min) & (x_orig < x_max))[0]
-
-        for it_new, t_center in enumerate(t_new):
-            t_min = t_center - half_dt
-            t_max = t_center + half_dt
-            idx_t = np.where((t_orig >= t_min) & (t_orig < t_max))[0]
-
-            if len(idx_x) > 0 and len(idx_t) > 0:
-                block = mask_orig[np.ix_(idx_x, idx_t)]
-                # Find most frequent nonzero detection ID
-                values, counts = np.unique(block[block > 0], return_counts=True)
-                if len(values) > 0:
-                    mask_new[ix_new, it_new] = values[np.argmax(counts)]
-                # else remains 0 (no detection)
-
-    return mask_new
-
-
+def generate_2D_mask_interp(tx_img_red, x_reduced, t_reduced, x_lab, t_lab,     
+                    t_win = (.5, 1.5), gf_sigma=5.0, tolerance = 0.1,
+                    dilation_size = (53, 53), shaping_method = None):
+    xi = np.interp(x_reduced, x_lab)
+    ti = np.interp(x_reduced, x_lab)
+    img_input = np.sum(tx_img_red, axis=0)
+    
+    mask = generate_2D_mask(img_input, x_extent, t_extent, x_lab, t_lab, 
+                     t_win, gf_sigma, tolerance,
+                     dilation_size, shaping_method)
+    return mask
 def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
     # Select device automatically
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -213,16 +168,13 @@ def compute_spectrograms(tx, fs, n_fft=256, hop_length=None, window=None):
         return_complex=True   # complex tensor for easy magnitude/phase
     )
 
+    # Convert to magnitude if desired
     specs_mag = specs.abs()
+
+    # If you want result back on CPU
     specs_mag = specs_mag.cpu()
 
-    # Frequency bins (real input, one-sided spectrum)
-    freqs = np.arange(0, n_fft // 2 + 1) * fs / n_fft
-
-    # Time stamps for each STFT column
-    times = np.arange(specs.size(-1)) * hop_length / fs
-
-    return times, freqs, specs_mag
+    return specs_mag
 
 def save_settings(n_fft, f_band, hop_length, t_win, gf_sigma, tolerance,
                   dilation_size, shaping_method, pool_method, pool_size,
@@ -331,9 +283,11 @@ labels = pd.read_sql_query(query, conn)
 datasets = labels['dataset'].unique()
 det_num = 0
 for dataset in datasets:
+
     rows_in_dataset = labels[labels['dataset'] == dataset]
     dataset_path = os.path.normpath(os.path.join(data_path, dataset))
-   
+
+    # load settings for this dataset:
     settings = io.load_settings_preprocessed_h5(os.path.join(dataset_path, 'settings.h5'))  
     nonzeros = settings['rehydration_info']['nonzeros_mask']
     nonzeros = settings['rehydration_info']['nonzeros_mask']
@@ -367,68 +321,29 @@ for dataset in datasets:
     previous_labels = {'x_m': [], 't_s': [], 'det_num': []}
 
     for file in source_files: 
-        data_filepath = os.path.join(dataset_path, file)
-        if not os.path.isfile(data_filepath):
-            # some labels erroneous -- don't correspond to actual files. Skip.
-            continue
-        
         # load tx data
-        fk_dehyd, timestamp = io.load_preprocessed_h5(data_filepath)        
+        fk_dehyd, timestamp = io.load_preprocessed_h5(os.path.join(dataset_path, file))        
         tx = 1e9 * io.rehydrate(fk_dehyd, nonzeros, original_shape, return_format='tx')
-
-        x_extent = tx.shape[0]*dx
-        t_extent = tx.shape[1]/fs
-
-        mask = np.zeros_like(tx)
-        
-        # First, add any previous labels carried over from last file
-        if previous_labels['x_m']:
-            for x_m_prev, t_s_prev, det_num_prev in zip(previous_labels['x_m'], previous_labels['t_s'], previous_labels['det_num']):
-                det_mask = generate_2D_mask(
-                    tx, x_extent=x_extent, t_extent=t_extent,
-                    x_lab=x_m_prev, t_lab=t_s_prev,
-                    t_win=t_win, gf_sigma=gf_sigma, tolerance=tolerance,
-                    dilation_size=dilation_size, shaping_method=shaping_method
-                )
-                mask[det_mask.astype(bool)] = det_num_prev
-            # Clear after adding
-            previous_labels = {'x_m': [], 't_s': [], 'det_num': []}
-
-        rows_in_file = rows_in_dataset[rows_in_dataset['source_file'] == file]
-        iter_next_window = 0
-        for i, row in rows_in_file.iterrows():
-            det_num += 1
-            x_m = np.array(ast.literal_eval(row['x_m']))
-            t_s = np.array(ast.literal_eval(row['t_s'])) + row['apex_time'] - timestamp
-
-            idx_next_window = t_s > t_extent
-            if any(idx_next_window):
-                previous_labels['t_s'].append(t_s[idx_next_window] - t_extent)
-                previous_labels['x_m'].append(x_m[idx_next_window])
-                previous_labels['det_num'].append(det_num)
-                x_m = x_m[~idx_next_window]
-                t_s = t_s[~idx_next_window]
-            det_mask = generate_2D_mask(tx, x_extent=x_extent, t_extent=t_extent, 
-                                        x_lab=x_m, t_lab=t_s,
-                                        t_win=t_win, gf_sigma=gf_sigma, tolerance=tolerance,
-                                        dilation_size=dilation_size, shaping_method=shaping_method)
-            mask[det_mask.astype(bool)] = det_num
     
         ##### calc spectrograms and reshape data ######
-        t_new, f_new, specs = compute_spectrograms(tx, fs, n_fft=n_fft, hop_length=hop_length, window=None)
+        specs = compute_spectrograms(tx, fs, n_fft=256, hop_length=hop_length, window=None)
        
         ####### dimension reduction #########
+        specs = specs.abs().squeeze().contiguous()  # linear amplitude, remove dims
+
         group_size = pool_size
-        n_xseg, n_freq_bins, n_time_frames = specs.shape
-        x_orig_trimmed = np.arange(0, n_xseg)*dx
+        n_channels, n_freq_bins, n_time_frames = specs.shape
+        f_new = np.fft.rfftfreq(n_fft, d=1/fs)
+        x_new = np.arange(0, n_channels)*dx
+        t_new = np.arange(0, n_time_frames)*dt_new
                         
-        # Trim channels so they can be grouped evenly
-        remainder = n_xseg % group_size
+        # Trim channels so we can group evenly
+        remainder = n_channels % group_size
         if remainder != 0:
-            specs = specs[:n_xseg - remainder]
+            specs = specs[:n_channels - remainder]
             mask = mask[:mask.shape[0] - remainder, :]
-            n_xseg = specs.shape[0]
-            x_orig_trimmed = x_orig_trimmed[:n_xseg - remainder]
+            n_channels = specs.shape[0]
+            x_new = x_new[:n_channels - remainder]
 
         # truncate in frequency dimension 
         band_idx = np.where((f_new >= f_band[0]) & (f_new <= f_band[1]))[0]
@@ -437,7 +352,7 @@ for dataset in datasets:
         n_freq_bins = len(f_new)
         
         # Reshape to (n_groups, group_size, freq, time) and max over group_size
-        n_groups = n_xseg // group_size
+        n_groups = n_channels // group_size
         specs_grouped = specs.view(n_groups, group_size, n_freq_bins, n_time_frames)
         
         if pool_method=='max':
@@ -450,7 +365,9 @@ for dataset in datasets:
             pooled = specs_grouped.median(dim=1).values 
             pooled = pooled.to('cpu').numpy()
         
-        if True: # plotting some slices. Set to false for full run
+        x_new = np.arange(0, pooled.shape[1])*x_new.max()/pooled.shape[1]
+        
+        if False: # plotting some slices. Set to false for full run
             # Pick indices to slice at
             freq_idx = np.argmin(np.abs(f_new - 25))
             chan_group_idx = 400          # example channel group
@@ -501,16 +418,16 @@ for dataset in datasets:
         t_orig_coords = np.arange(mask.shape[1]) * dt       # seconds for each time pixel
         x_orig_coords = np.arange(mask.shape[0]) * dx       # meters for each channel
 
-        # Compute center position for each group
-        x_new = np.array([
-            x_orig_trimmed[i * group_size : (i + 1) * group_size].mean()
-            for i in range(n_groups)
-        ])        
-        
+        # Reduced coords from pooled data
+        t_new_coords = np.arange(pooled.shape[2]) * dt_new
+        x_new_coords = np.arange(pooled.shape[0]) * (x_extent / pooled.shape[0])
+
+        # transpose pooled
+
         # map mask to new dimensions
         mask_reduced = map_mask_to_reduced_size(mask, 
                                         t_orig_coords, x_orig_coords,
-                                        t_new, x_new)
+                                        t_new_coords, x_new_coords)
 
         # force mask to be same dimensions as pooled data:
         x_dif = mask_reduced.shape[0] - pooled.shape[0] 
