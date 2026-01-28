@@ -85,9 +85,6 @@ def get_timestamp(file_maps, dataset_name, file_name):
     timestamps = file_maps[dataset_name]['timestamp'][idx][0]
     return timestamps
 
-
-import numpy as np
-
 def add_gaussian_to_image(image, center_x, center_y, sigma_x=3.0, sigma_y=3.0, mode='add', amplitude=1.0):
     """
     Add or max a 2D Gaussian onto the given image.
@@ -146,7 +143,6 @@ file_maps = get_filemaps(raw_data_path, datasets)
 #############################################################################
 # Iterate and generate images/masks
 #############################################################################
-
 
 for file in img_files:
     # I. load data:
