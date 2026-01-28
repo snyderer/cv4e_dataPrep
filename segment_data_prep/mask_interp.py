@@ -1,4 +1,5 @@
-# for now, putting everything into one file. Can break out components later if it's convenient.
+# TODO NOT WORKING- only got partway through developing this.
+
 import data_io as io
 import matplotlib.pyplot as plt
 import numpy as np

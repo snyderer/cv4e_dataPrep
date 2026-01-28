@@ -282,7 +282,14 @@ def save_sample(out_dir, sample_id, pooled_tensor, mask_reduced):
     pooled_tensor: np.ndarray shape (distance, freq, time) after pooling
     mask_reduced: np.ndarray shape (distance, time) with class IDs
     """
-
+    
+    img_dir = os.path.join(out_dir, 'imgs')
+    if not os.path.isdir(img_dir):
+        os.mkdir(img_dir)
+    mask_dir = os.path.join(out_dir, 'masks')
+    if not os.path.isdir(mask_dir):
+        os.mkdir(mask_dir)
+    
     # Convert pooled to channels-first: (freq, distance, time)
     pooled_cf = np.transpose(pooled_tensor, (1, 0, 2))  # freq, dist, time
 
@@ -293,13 +300,14 @@ def save_sample(out_dir, sample_id, pooled_tensor, mask_reduced):
     os.makedirs(out_dir, exist_ok=True)
 
     # Save dict
-    torch.save(
-        {
-            "input": pooled_cf_torch,  # [channels=freq, height=dist, width=time]
-            "mask": mask_torch         # [height=dist, width=time]
-        },
-        os.path.join(out_dir, f"{sample_id}.pt")
+    torch.save(pooled_cf_torch,  # [channels=freq, height=dist, width=time]
+        os.path.join(img_dir, f"{sample_id}.pt")
     )
+    
+    torch.save( mask_torch,         # [height=dist, width=time]
+        os.path.join(mask_dir, f"{sample_id}.pt")
+    )
+    
 
 
 save_settings(n_fft, f_band, hop_length, t_win, gf_sigma, tolerance,
@@ -328,7 +336,7 @@ labels = pd.read_sql_query(query, conn)
 ###################################################
 
 # get list of unique datasets in labels:
-datasets = labels['dataset'].unique()
+datasets = labels['dataset'].unique()   # TODO: this could potentially fail if two files from different paths have same name
 det_num = 0
 for dataset in datasets:
     rows_in_dataset = labels[labels['dataset'] == dataset]

@@ -4,6 +4,7 @@ import numpy as np
 import glob
 import os
 
+#TODO : adjust loading now that masks and inputs are saved in different files
 def plot_sample(sample_path, save_name='saved_data.png'):
     # Load data
     data = torch.load(sample_path)
@@ -59,7 +60,7 @@ def plot_overlay(sample_path, save_name):
     plt.savefig(save_name)
 
 # Load and plot a few files
-sample_files = glob.glob("/mnt/class_data/esnyder/segmentation_data/fixed_width/*.pt")[100:103]  # first 3 files
+sample_files = glob.glob("/mnt/class_data/esnyder/segmentation_data/fixed_width/imgs")  # first 3 files
 iter = 0
 for f in sample_files:
     save_name = 'saved_data_' + str(iter) + '.png'
