@@ -100,15 +100,27 @@ img_files = sorted(glob.glob(imgs_data_path + '/*.pt'))
 datasets = labels['dataset'].unique()
 file_maps = get_filemaps(raw_data_path, datasets)
 
+
 #############################################################################
 # Iterate and generate images/labels with spillover handling
 #############################################################################
+labels['t_posix_s'] = [[] for _ in range(len(labels))]
+for i, label in labels.iterrows():
+    
+    dataset_name = label['dataset']
+    file_name = label['source_file']
+    
+    t_s = np.array(eval(label['t_s']), dtype=float) + label['apex_time']
+    labels[i, 't_posix_s'] = t_s
+
 previous_labels = defaultdict(list)
 det_no = 0
 
+previous_labels = []  # store actual dict rows
+
 for file in img_files:
     img = torch.load(file)
-    nf, nx, nt = img.shape  # move here so nt is defined
+    nf, nx, nt = img.shape
     t_extent = nt * dt
     x_extent = nx * dx
 
@@ -116,46 +128,65 @@ for file in img_files:
     file_name = Path(file).stem[-15:]
     timestamp = get_timestamp(file_maps, dataset_name, file_name)
 
-    # Apex inside file
-    labels_in_datachunk = labels[
-        (labels['apex_time'] >= timestamp) &
-        (labels['apex_time'] <= timestamp + file_duration)
-    ].copy()
+    # Labels inside this file, from DB
+    # labels_in_datachunk = labels[
+    #     (labels['apex_time'] >= timestamp) &
+    #     (labels['apex_time'] <= timestamp + file_duration)
+    # ].copy()
+    
+    # Create a boolean mask — True if any value in list is within the range
+    in_window = labels['t_posix_s'].apply(lambda arr: any(timestamp <= x <= timestamp + file_duration for x in arr))
 
-    # Add previous spillover labels  
-    if previous_labels['x_m']:
-        spill_df = pd.DataFrame(previous_labels)
-        spill_df['apex_time'] = timestamp  # fake apex for consistency
-        labels_in_datachunk = pd.concat([spill_df, labels_in_datachunk], ignore_index=True)
-        labels_in_datachunk = labels_in_datachunk[labels_in_datachunk['id'].notna()]
-        previous_labels = defaultdict(list)  # clear after adding
+    # Apply the mask to filter rows
+    labels_in_datachunk = labels[in_window]
+    
+    # Inject previous spillover
+    # if previous_labels:
+    #     spill_df = pd.DataFrame(previous_labels)
+    #     labels_in_datachunk = pd.concat([spill_df, labels_in_datachunk], ignore_index=True)
+    #     previous_labels.clear()
 
     seg_polygons = []
 
-    for idx, label in labels_in_datachunk.iterrows():
+    for _, label in labels_in_datachunk.iterrows():
         if pd.isna(label['id']):
             continue
+
         det_no += 1
 
         x_m = np.array(eval(label['x_m']), dtype=float)
         t_s = np.array(eval(label['t_s']), dtype=float) + label['apex_time'] - timestamp
 
-        # Spillover check
-        idx_next_window = t_s > t_extent
-        if any(idx_next_window):
-            previous_labels['t_s'].append(list(t_s[idx_next_window] - t_extent))
-            previous_labels['x_m'].append(list(x_m[idx_next_window]))
-            previous_labels['det_num'].append(det_no)
-            # Keep only in-bounds part
-            x_m = x_m[~idx_next_window]
-            t_s = t_s[~idx_next_window]
+        # Check for points spilling into next file
+        # idx_next_window = t_s > t_extent
+        # if any(idx_next_window):
+        #     spill_row = {
+        #         'id': label['id'],
+        #         'x_m': str(list(x_m[idx_next_window])),
+        #         't_s': str(list(t_s[idx_next_window] - t_extent)),
+        #         'det_num': det_no,
+        #         'apex_time': timestamp
+        #     }
+        #     previous_labels.append(spill_row)
 
-        # Create extended contour for segmentation
+            # Trim in-bounds portion for current polygons
+        # x_m = x_m[~idx_next_window]
+        # t_s = t_s[~idx_next_window]
+                
+        # Pad and create full contour
         t_s_down = t_s - t_win[0]
         t_s_up = t_s + t_win[1]
         t_s_full = np.concatenate([t_s_down, np.flip(t_s_up)])
         x_m_full = np.concatenate([x_m, np.flip(x_m)])
+        
+        # Clip to current file bounds
+        in_bounds = (t_s_full >= 0) & (t_s_full <= t_extent)
+        if not np.any(in_bounds):
+            continue
+        t_s_full = t_s_full[in_bounds]
+        x_m_full = x_m_full[in_bounds]
 
+        # Pixel coords
         x_pxl = [int(x1 / dx) for x1 in x_m_full]
         t_pxl = [int(t1 / dt) for t1 in t_s_full]
         seg_polygons.append(list(zip(t_pxl, x_pxl)))

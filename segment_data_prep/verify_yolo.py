@@ -50,7 +50,7 @@ def plot_segmentation_with_labels(image_path, label_path):
         xs, ys = zip(*poly_points)
         ax.plot(xs, ys, label=f"Class {cls_id}")
 
-    ax.legend()
+    # ax.legend()
     plt.title(f"Segmentation Labels: {image_path.name}")
     fig.savefig(f"./test_images/yolo_seg/{image_path.name}")
 
@@ -68,18 +68,22 @@ def plot_bbox_with_labels(image_path, label_path):
                              linewidth=2, edgecolor='red', facecolor='none', label=f"Class {cls_id}")
         ax.add_patch(rect)
 
-    ax.legend()
+    # ax.legend()
     plt.title(f"BBox Labels: {image_path.name}")
     fig.savefig(f"./test_images/yolo_bb/{image_path.name}")
 
 
 # -------- Example usage --------
 # Pick one segmentation example to display
-example_seg_image = list(seg_imgs_out_path.glob("*.png"))[-1]
-example_seg_label = seg_labels_out_path / (example_seg_image.stem + ".txt")
-plot_segmentation_with_labels(example_seg_image, example_seg_label)
+filelist = list(seg_imgs_out_path.glob("*.png"))
+# idx = np.random.randint(0, len(filelist), size=4)
+idx = [11, 45, 101, 144]
+for i in idx:
+    example_seg_image = filelist[i]
+    example_seg_label = seg_labels_out_path / (example_seg_image.stem + ".txt")
+    plot_segmentation_with_labels(example_seg_image, example_seg_label)
 
 # Pick one bounding box example to display
-example_bb_image = list(bb_imgs_out_path.glob("*.png"))[-1]
-example_bb_label = bb_labels_out_path / (example_bb_image.stem + ".txt")
-plot_bbox_with_labels(example_bb_image, example_bb_label)
+# example_bb_image = list(bb_imgs_out_path.glob("*.png"))[-1]
+# example_bb_label = bb_labels_out_path / (example_bb_image.stem + ".txt")
+# plot_bbox_with_labels(example_bb_image, example_bb_label)
