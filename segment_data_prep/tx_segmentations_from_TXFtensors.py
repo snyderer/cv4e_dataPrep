@@ -35,6 +35,7 @@ dx = 8 * 10
 dt = 40 / 200
 t_win = [.75, 1.5]
 c = 1500 # speed of sound (m/s)
+nx = int(100e3/dx)
 
 clip_val_seg = 100
 clip_val_bb = 10
@@ -93,6 +94,40 @@ def save_segmentation_labels(label_path, polygons, class_id=0, img_w=None, img_h
                 norm_poly.append(y / img_h)
             f.write(f"{class_id} {' '.join(map(str, norm_poly))}\n")
 
+def pad_image_to_size(image, target_size):
+    """
+    Zero-pad a 2D image to the target_size (height, width).
+    If the image is larger than target_size in any dimension, 
+    it will be cropped.
+    """
+    target_h, target_w = target_size
+    h, w = image.shape
+    
+    # Clip if larger than target
+    if h > target_h:
+        image = image[:target_h, :]
+        h = target_h
+    if w > target_w:
+        image = image[:, :target_w]
+        w = target_w
+    
+    # Calculate padding amounts
+    pad_h = target_h - h
+    pad_w = target_w - w
+    
+    pad_top = pad_h // 2
+    pad_bottom = pad_h - pad_top
+    pad_left = pad_w // 2
+    pad_right = pad_w - pad_left
+    
+    # Apply padding
+    padded_image = np.pad(
+        image,
+        ((pad_top, pad_bottom), (pad_left, pad_right)),
+        mode='constant',
+        constant_values=0
+    )
+    return padded_image
 #############################################################################
 # Set up file lists and mappings
 #############################################################################
@@ -111,7 +146,7 @@ for i, label in labels.iterrows():
     file_name = label['source_file']
     
     t_s = np.array(eval(label['t_s']), dtype=float) + label['apex_time']
-    labels[i, 't_posix_s'] = t_s
+    labels['t_posix_s'][i] = t_s
 
 previous_labels = defaultdict(list)
 det_no = 0
@@ -191,11 +226,22 @@ for file in img_files:
         t_pxl = [int(t1 / dt) for t1 in t_s_full]
         seg_polygons.append(list(zip(t_pxl, x_pxl)))
 
+
+    seg_img_name = f"{Path(file).stem}.png"
+
     # Save segmentation image
     summed = img.sum(dim=0)
-    seg_img_name = f"{Path(file).stem}.png"
-    plt.imsave(Path(seg_imgs_out_path) / seg_img_name,
-               np.clip(summed.cpu().numpy(), 0, clip_val_seg))
+    
+    summed = img.sum(dim=0).cpu().numpy()
+    summed = np.clip(summed, 0, clip_val_seg)
+
+    # Zero pad to target size
+    summed_padded = pad_image_to_size(summed, (int(nx), summed.shape[1]))
+
+    plt.imsave(Path(seg_imgs_out_path) / seg_img_name, summed_padded)
+    
+    # plt.imsave(Path(seg_imgs_out_path) / seg_img_name,
+    #            np.clip(summed.cpu().numpy(), 0, clip_val_seg))
 
     # Save segmentation labels
     save_segmentation_labels(Path(seg_labels_out_path) / f"{Path(file).stem}.txt",
