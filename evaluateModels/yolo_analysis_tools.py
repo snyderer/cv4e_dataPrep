@@ -6,16 +6,39 @@ import matplotlib.pyplot as plt
 
 def load_yolo_polygon(label_path, img_width, img_height):
     polygons = []
+    if not os.path.exists(label_path):
+        return polygons
+
     with open(label_path, 'r') as f:
         for line in f:
             parts = line.strip().split()
+            if len(parts) < 3:
+                # needs at least class + 2 coords
+                continue
             cls = int(parts[0])
             coords = list(map(float, parts[1:]))
+
+            # Need at least 6 floats for 3 points (x1,y1,x2,y2,x3,y3)
+            if len(coords) < 6:
+                continue
+
             xs = np.array(coords[0::2]) * img_width
             ys = np.array(coords[1::2]) * img_height
-            poly = Polygon(zip(xs, ys))
+
+            # Polygon requires at least 3 points
+            if len(xs) < 3 or len(ys) < 3:
+                continue
+
+            poly_coords = list(zip(xs, ys))
+            if len(poly_coords) < 3:
+                continue
+
+            poly = Polygon(poly_coords)
             if poly.is_valid and poly.area > 0:
                 polygons.append((cls, poly))
+            else:
+                # optionally log invalid polygons
+                pass
     return polygons
 
 def intersection_fraction(pred_poly, gt_poly):
