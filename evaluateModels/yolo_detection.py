@@ -5,12 +5,14 @@ from shapely.ops import unary_union
 import yolo_analysis_tools as yo
 import matplotlib.pyplot as plt
 
-run_num = 4
-path_in = r'/home/Eric/Documents/gitRepos/instance_seg_yolo/runs/segment/'
-predictions_path = f"/mnt/class_data/esnyder/yolo_data/tx_segmentation/predictions/train{run_num}_val/labels"
-labels_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/labels/val"
-imgs_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/images/val"
-filename = 'ooi_optasense_north_c2_full_20211102_215231.txt'
+# run_num = 4
+split = 'random' 
+# split = 'svalbard'
+path_in = f"~/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split"
+predictions_path = f"~/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split/labels"
+labels_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/random_split/labels/val"
+imgs_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/random_split/images/val"
+filename = 'ooi_optasense_north_c2_full_20211102_215401.txt'
 imgsz=(667, 1070)
 
 prediction_filepath = os.path.join(predictions_path, filename)
@@ -24,4 +26,4 @@ fig = yo.plot_polygons_on_image(img_filepath,
                             label_filepath, 
                             prediction_filepath)
 
-fig.savefig('test.png')
+fig.savefig('fixed_up_validation.png')
