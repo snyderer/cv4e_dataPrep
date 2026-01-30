@@ -8,11 +8,11 @@ import matplotlib.pyplot as plt
 # run_num = 4
 split = 'random' 
 # split = 'svalbard'
-path_in = f"~/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split"
-predictions_path = f"~/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split/labels"
+path_in = f"/home/Eric/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split/val"
+predictions_path = f"/home/Eric/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split/val/labels"
 labels_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/random_split/labels/val"
 imgs_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/random_split/images/val"
-filename = 'ooi_optasense_north_c2_full_20211102_215401.txt'
+filename = 'ooi_optasense_north_c2_full_20211102_223331.txt'
 imgsz=(667, 1070)
 
 prediction_filepath = os.path.join(predictions_path, filename)
@@ -26,4 +26,4 @@ fig = yo.plot_polygons_on_image(img_filepath,
                             label_filepath, 
                             prediction_filepath)
 
-fig.savefig('fixed_up_validation.png')
+fig.savefig(f'plot_det_{split}_{filename[:-4]}.png')

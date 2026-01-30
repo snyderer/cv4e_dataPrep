@@ -143,11 +143,11 @@ def plot_polygons_on_image(img_path, gt_label_path=None, pred_label_path=None,
                 ax.fill(xs, ys, color=color, alpha=0.2)
                 
                 # Annotate class
-                ax.text(xs[0], ys[0], f"{label_name} cls{cls_id}",
-                        color=color, fontsize=8, bbox=dict(facecolor='white', alpha=0.5))
+                # ax.text(xs[0], ys[0], f"{label_name} cls{cls_id}",
+                #         color=color, fontsize=8, bbox=dict(facecolor='white', alpha=0.5))
 
     # Plot GT polygons in green
-    load_polygons(gt_label_path, color='lime', label_name='GT')
+    load_polygons(gt_label_path, color='lime', label_name='Lab')
     # Plot prediction polygons in red
     load_polygons(pred_label_path, color='red', label_name='Pred')
 
