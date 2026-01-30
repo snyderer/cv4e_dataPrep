@@ -23,17 +23,15 @@ thresholds       = np.linspace(0, 1, 21)   # thresholds from 0.0 to 1.0 in steps
 
 def match_counts(pred_file, gt_file, width, height, thresh):
     """
-    For one image, count TP, FP, FN given threshold on intersection_fraction.
+    For one image, count TP, FP given threshold on intersection_fraction.
     """
     preds = yo.load_yolo_polygon(pred_file, width, height)
     gts   = yo.load_yolo_polygon(gt_file, width, height)
 
     TP = 0
     FP = 0
-    FN = 0
-
-    # Predictions: find a GT match with enough overlap
     matched_gt_indices = set()
+
     for cls_p, poly_p in preds:
         best_frac = 0
         best_gt_idx = None
@@ -48,25 +46,17 @@ def match_counts(pred_file, gt_file, width, height, thresh):
         else:
             FP += 1
 
-    # Missed detections: GT polygons that no pred matched
-    for idx_g in range(len(gts)):
-        if idx_g not in matched_gt_indices:
-            FN += 1
-
-    return TP, FP, FN
+    return TP, FP
 
 
 def sweep_thresholds(predictions_dir, labels_dir, width, height, thresholds):
-    tp_frac_list = []
-    fn_count_list = []
+    tp_list = []
+    fp_list = []
 
     pred_files = sorted(os.listdir(predictions_dir))
     for thresh in thresholds:
         total_tp = 0
         total_fp = 0
-        total_fn = 0
-        total_preds = 0
-        total_gts = 0
 
         for pred_file in pred_files:
             pred_fp = os.path.join(predictions_dir, pred_file)
@@ -75,46 +65,31 @@ def sweep_thresholds(predictions_dir, labels_dir, width, height, thresholds):
             if not os.path.exists(gt_fp):
                 continue
 
-            TP, FP, FN = match_counts(pred_fp, gt_fp, width, height, thresh)
+            TP, FP = match_counts(pred_fp, gt_fp, width, height, thresh)
             total_tp += TP
             total_fp += FP
-            total_fn += FN
-            total_preds += TP + FP
-            total_gts += TP + FN
 
-        tp_frac = total_tp / total_preds if total_preds else 0
-        fn_frac = total_fn / total_gts if total_gts else 0
+        tp_list.append(total_tp)
+        fp_list.append(total_fp)
 
-        tp_frac_list.append(tp_frac)
-        fn_count_list.append(total_fn)  # Or use fn_frac for fraction
-
-    return tp_frac_list, fn_count_list
+    return tp_list, fp_list
 
 
 if __name__ == "__main__":
-    tp_fractions, fn_counts = sweep_thresholds(
-        predictions_path, labels_path, img_width, img_height, thresholds,
+    tp_counts, fp_counts = sweep_thresholds(
+        predictions_path, labels_path, img_width, img_height, thresholds
     )
 
-    # === Plot two curves ===
-    fig, ax1 = plt.subplots(figsize=(8,5))
+    # === Plot histogram-style chart ===
+    width = 0.025  # bar width to fit side-by-side
+    fig, ax = plt.subplots(figsize=(8,5))
 
-    color_tp = 'tab:blue'
-    ax1.set_xlabel('Overlap Threshold')
-    ax1.set_ylabel('True Positive Fraction', color=color_tp)
-    ax1.plot(thresholds, tp_fractions, marker='o', color=color_tp, label='TP Fraction')
-    ax1.tick_params(axis='y', labelcolor=color_tp)
-    ax1.set_ylim([0, 1])
+    ax.bar(thresholds - width/2, tp_counts, width=width, color='tab:blue', label='True Positives')
+    ax.bar(thresholds + width/2, fp_counts, width=width, color='tab:red', label='False Positives')
 
-    ax2 = ax1.twinx()  # Second y-axis
-    color_fn = 'tab:red'
-    ax2.set_ylabel('Missed Detections (Count)', color=color_fn)
-    ax2.plot(thresholds, fn_counts, marker='s', color=color_fn, label='Missed Detections')
-    ax2.tick_params(axis='y', labelcolor=color_fn)
-
-    # Title and grid
-    fig.suptitle("YOLO Segmentation Performance Sweep over Thresholds", fontsize=14)
-    fig.grid = True
-
-    fig.tight_layout()
+    ax.set_xlabel('Overlap Threshold')
+    ax.set_ylabel('Count')
+    ax.set_title('True Positives vs False Positives by Overlap Threshold')
+    ax.legend()
+    plt.tight_layout()
     plt.savefig(f'hist_{split}.png')
