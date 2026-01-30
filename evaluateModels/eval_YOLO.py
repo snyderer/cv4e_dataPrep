@@ -9,6 +9,12 @@ import csv
 import numpy as np
 import yolo_analysis_tools as yo
 
+######################### BAD CODE ############################
+###############################################################
+# This doesn't correctly match predicted and training labels
+# retaining only to scraping for parts later
+###############################################################
+
 # ==== USER CONFIG ====
 # split = 'random' 
 split = 'svalbard'

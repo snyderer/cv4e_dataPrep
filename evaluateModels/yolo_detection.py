@@ -10,9 +10,9 @@ split = 'random'
 # split = 'svalbard'
 path_in = f"/home/Eric/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split/val"
 predictions_path = f"/home/Eric/Documents/gitRepos/instance_seg_yolo/cv4e_final/segment/runs/{split}_split/val/labels"
-labels_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/random_split/labels/val"
-imgs_path = "/mnt/class_data/esnyder/yolo_data/tx_segmentation/random_split/images/val"
-filename = 'ooi_optasense_north_c2_full_20211102_223331.txt'
+labels_path = f"/mnt/class_data/esnyder/yolo_data/tx_segmentation/{split}_split/labels/val"
+imgs_path = f"/mnt/class_data/esnyder/yolo_data/tx_segmentation/{split}_split/images/val"
+filename = 'ooi_optasense_north_c2_full_20211102_223701.txt'
 imgsz=(667, 1070)
 
 prediction_filepath = os.path.join(predictions_path, filename)
